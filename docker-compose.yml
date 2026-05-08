@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: imdb_postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-imdb_db}
+      POSTGRES_USER: ${DB_USER:-imdb_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=tr_TR.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - imdb_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-imdb_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API Server
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: imdb_backend
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 5000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-imdb_db}
+      DB_USER: ${DB_USER:-imdb_user}
+      DB_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+      JWT_SECRET: ${JWT_SECRET:-your_super_secret_jwt_key_change_this}
+      JWT_EXPIRE: 7d
+      API_URL: http://localhost:5000
+      FRONTEND_URL: http://localhost:3000
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - imdb_network
+    restart: unless-stopped
+
+  # Frontend React App
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: imdb_frontend
+    environment:
+      REACT_APP_API_URL: http://localhost:5000
+      REACT_APP_API_BASE_URL: http://localhost:5000/api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - imdb_network
+    restart: unless-stopped
+
+  # Redis Cache (Optional but Recommended)
+  redis:
+    image: redis:7-alpine
+    container_name: imdb_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - imdb_network
+    restart: unless-stopped
+
+  # pgAdmin - PostgreSQL Management UI (Optional)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: imdb_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - imdb_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  imdb_network:
+    driver: bridge
+
+# Usage:
+# docker-compose up -d                 # Start all services
+# docker-compose down                  # Stop all services
+# docker-compose logs -f              # View logs
+# docker-compose ps                   # Show running containers
+# docker-compose exec postgres psql -U imdb_user -d imdb_db  # Access DB
